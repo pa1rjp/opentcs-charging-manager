@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>openTCS Charging Manager</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ─── Header ──────────────────────────────────────────────────────────── -->
+  <header>
+    <span class="logo">⚡ openTCS Charging Manager</span>
+
+    <nav>
+      <button class="active" data-tab="fleet"  onclick="switchTab('fleet')">Fleet</button>
+      <button data-tab="logs"   onclick="switchTab('logs')">Engine Log</button>
+      <button data-tab="config" onclick="switchTab('config')">Config</button>
+      <a href="/charging-logic.html" target="_blank">Charging Logic ↗</a>
+    </nav>
+
+    <div class="header-right">
+      <span id="engine-badge" class="engine-badge stopped">ENGINE STOPPED</span>
+      <span id="last-update" class="last-update"></span>
+    </div>
+  </header>
+
+  <!-- ─── Main ────────────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- ── Fleet Tab ──────────────────────────────────────────────────────── -->
+    <div id="tab-fleet" class="tab-panel active">
+
+      <!-- Charger status bar -->
+      <div class="section-title">Charger Status</div>
+      <div id="charger-bar" class="charger-bar">
+        <div class="charger-slot free">
+          <div class="charger-dot free"></div>
+          <div class="charger-info">
+            <div class="charger-name">Loading…</div>
+            <div class="charger-occupant"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fleet grid -->
+      <div class="section-title">Vehicles</div>
+      <div id="fleet-grid" class="fleet-grid">
+        <!-- populated by app.js -->
+        <div class="card" style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:40px">
+          Connecting to openTCS…
+        </div>
+      </div>
+
+      <hr class="divider" />
+
+      <!-- Engine controls inline on fleet tab -->
+      <div class="section-title">Engine Controls</div>
+      <div class="engine-controls">
+        <button class="btn btn-danger"  onclick="enginePause()">⏸ Pause Engine</button>
+        <button class="btn btn-success" onclick="engineResume()">▶ Resume Engine</button>
+        <button class="btn btn-ghost"   id="btn-cycle" onclick="engineCycle()">↺ Force Cycle</button>
+      </div>
+    </div>
+
+    <!-- ── Log Tab ────────────────────────────────────────────────────────── -->
+    <div id="tab-logs" class="tab-panel">
+      <div class="card">
+        <div class="card-title">Engine Event Log</div>
+
+        <div class="log-toolbar">
+          <select class="log-filter-select" onchange="onLogLevelChange(this.value)">
+            <option value="">All levels</option>
+            <option value="info">INFO</option>
+            <option value="warn">WARN</option>
+            <option value="error">ERROR</option>
+          </select>
+
+          <input
+            class="log-filter-input"
+            type="text"
+            placeholder="Filter by vehicle…"
+            oninput="onLogVehicleChange(this.value)"
+          />
+
+          <button class="btn btn-ghost btn-sm" onclick="fetchLogs()">↺ Refresh</button>
+        </div>
+
+        <div class="log-table-wrap">
+          <table class="log-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Level</th>
+                <th>Vehicle</th>
+                <th>Rule</th>
+                <th>Action</th>
+                <th>Charger</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody id="log-tbody">
+              <tr><td colspan="7" class="log-empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Config Tab ─────────────────────────────────────────────────────── -->
+    <div id="tab-config" class="tab-panel">
+      <div class="card">
+        <div class="card-title">Charging Thresholds</div>
+
+        <div class="config-section">
+
+          <!-- Critical -->
+          <div class="config-row">
+            <div class="config-label">
+              <strong style="color:var(--red)">Critical</strong>
+              <small>Charge immediately</small>
+            </div>
+            <div class="threshold-slider">
+              <input type="range" id="thresh-critical" min="1" max="49"
+                     oninput="onSliderInput('thresh-critical','critical')" />
+              <span class="threshold-value" id="thresh-critical-val" style="color:var(--red)">30%</span>
+            </div>
+          </div>
+
+          <!-- Good -->
+          <div class="config-row">
+            <div class="config-label">
+              <strong style="color:var(--amber)">Good</strong>
+              <small>Opportunistic charge</small>
+            </div>
+            <div class="threshold-slider">
+              <input type="range" id="thresh-good" min="1" max="79"
+                     oninput="onSliderInput('thresh-good','good')" />
+              <span class="threshold-value" id="thresh-good-val" style="color:var(--amber)">50%</span>
+            </div>
+          </div>
+
+          <!-- Sufficient -->
+          <div class="config-row">
+            <div class="config-label">
+              <strong style="color:var(--accent)">Sufficient</strong>
+              <small>Continue charging</small>
+            </div>
+            <div class="threshold-slider">
+              <input type="range" id="thresh-sufficient" min="1" max="97"
+                     oninput="onSliderInput('thresh-sufficient','sufficient')" />
+              <span class="threshold-value" id="thresh-sufficient-val" style="color:var(--accent)">80%</span>
+            </div>
+          </div>
+
+          <!-- Full -->
+          <div class="config-row">
+            <div class="config-label">
+              <strong style="color:var(--green)">Full</strong>
+              <small>Park when reached</small>
+            </div>
+            <div class="threshold-slider">
+              <input type="range" id="thresh-full" min="1" max="100"
+                     oninput="onSliderInput('thresh-full','full')" />
+              <span class="threshold-value" id="thresh-full-val" style="color:var(--green)">98%</span>
+            </div>
+          </div>
+
+        </div>
+
+        <hr class="divider" />
+        <div class="card-title">Engine Settings</div>
+
+        <div class="config-section">
+
+          <div class="config-row">
+            <div class="config-label">
+              <strong>Poll Interval</strong>
+              <small>ms between cycles</small>
+            </div>
+            <input type="number" id="poll-interval" class="config-input"
+                   min="1000" step="1000" value="10000"
+                   onchange="state.configDirty = true" />
+          </div>
+
+          <div class="config-row">
+            <div class="config-label">
+              <strong>Engine Enabled</strong>
+              <small>Auto-manage charging</small>
+            </div>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="engine-enabled" checked
+                       onchange="state.configDirty = true" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="config-save-bar">
+          <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
+          <span id="config-save-msg" class="config-save-msg"></span>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

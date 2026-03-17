@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Charging Logic — openTCS Charging Manager</title>
+<style>
+  /* ── Reset & base ─────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0f1117;
+    --bg2:       #1a1d27;
+    --bg3:       #222535;
+    --border:    #2e3248;
+    --border2:   #3d4160;
+    --text:      #e2e4f0;
+    --text2:     #9196b0;
+    --text3:     #5c6080;
+    --mono:      'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+    --c-red:     #e05252;
+    --c-red-bg:  #2a1a1a;
+    --c-red-bd:  #5c2a2a;
+    --c-amber:   #d4933a;
+    --c-amber-bg:#271f0f;
+    --c-amber-bd:#5c3e10;
+    --c-green:   #4caf7d;
+    --c-green-bg:#0f2318;
+    --c-green-bd:#1e5c38;
+    --c-blue:    #5b9cf6;
+    --c-blue-bg: #0f1d33;
+    --c-blue-bd: #1e3d66;
+    --c-purple:  #9b7ef8;
+    --c-purple-bg:#1a1530;
+    --c-purple-bd:#3d2e66;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Page shell ───────────────────────────────────────────────── */
+  .page { max-width: 900px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  .page-header { margin-bottom: 28px; }
+  .page-title {
+    font-size: 18px; font-weight: 600; color: var(--text);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .page-title-badge {
+    font-size: 10px; font-weight: 500; padding: 2px 8px;
+    border-radius: 4px; background: var(--bg3); color: var(--text2);
+    border: 1px solid var(--border2); letter-spacing: .04em; text-transform: uppercase;
+  }
+  .page-subtitle { font-size: 12px; color: var(--text3); margin-top: 5px; }
+
+  /* ── Section ──────────────────────────────────────────────────── */
+  .section { margin-bottom: 32px; }
+  .section-label {
+    font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text3); margin-bottom: 12px; padding-left: 2px;
+  }
+
+  /* ── Threshold bar ────────────────────────────────────────────── */
+  .thbar {
+    display: flex; border-radius: 8px; overflow: hidden;
+    height: 36px; border: 1px solid var(--border2); margin-bottom: 24px;
+  }
+  .thbar-seg {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; color: rgba(255,255,255,.85);
+    letter-spacing: .02em; position: relative; cursor: default;
+    transition: filter .15s;
+  }
+  .thbar-seg:hover { filter: brightness(1.15); }
+  .thbar-seg::after {
+    content: ''; position: absolute; right: 0; top: 6px; bottom: 6px;
+    width: 1px; background: rgba(255,255,255,.2);
+  }
+  .thbar-seg:last-child::after { display: none; }
+  .thbar-seg.seg-critical  { width: 30%; background: #7b1f1f; }
+  .thbar-seg.seg-good      { width: 20%; background: #7a4800; }
+  .thbar-seg.seg-sufficient{ width: 30%; background: #1a4d2e; }
+  .thbar-seg.seg-full      { width: 20%; background: #1a3a66; }
+  .seg-pct { opacity: .55; font-size: 10px; margin-left: 4px; font-weight: 400; }
+
+  /* ── Tabs ─────────────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tab {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid var(--border2); color: var(--text2);
+    background: var(--bg2); transition: all .15s; white-space: nowrap;
+  }
+  .tab:hover { border-color: var(--border2); color: var(--text); background: var(--bg3); }
+  .tab.active.t-critical  { background: var(--c-red-bg);    border-color: var(--c-red-bd);    color: var(--c-red); }
+  .tab.active.t-good      { background: var(--c-amber-bg);  border-color: var(--c-amber-bd);  color: var(--c-amber); }
+  .tab.active.t-sufficient{ background: var(--c-green-bg);  border-color: var(--c-green-bd);  color: var(--c-green); }
+  .tab.active.t-full      { background: var(--c-blue-bg);   border-color: var(--c-blue-bd);   color: var(--c-blue); }
+  .tab.active.t-enroute   { background: var(--c-purple-bg); border-color: var(--c-purple-bd); color: var(--c-purple); }
+
+  /* ── Panels ───────────────────────────────────────────────────── */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── Level banner ─────────────────────────────────────────────── */
+  .level-banner {
+    border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    border: 1px solid;
+  }
+  .level-banner.critical  { background: var(--c-red-bg);    border-color: var(--c-red-bd); }
+  .level-banner.good      { background: var(--c-amber-bg);  border-color: var(--c-amber-bd); }
+  .level-banner.sufficient{ background: var(--c-green-bg);  border-color: var(--c-green-bd); }
+  .level-banner.full      { background: var(--c-blue-bg);   border-color: var(--c-blue-bd); }
+  .level-banner.enroute   { background: var(--c-purple-bg); border-color: var(--c-purple-bd); }
+  .level-pct { font-size: 28px; font-weight: 700; font-family: var(--mono); line-height: 1; }
+  .level-pct.critical   { color: var(--c-red); }
+  .level-pct.good       { color: var(--c-amber); }
+  .level-pct.sufficient { color: var(--c-green); }
+  .level-pct.full       { color: var(--c-blue); }
+  .level-pct.enroute    { color: var(--c-purple); }
+  .level-desc { font-size: 12px; color: var(--text2); margin-top: 3px; }
+  .level-prop { margin-left: auto; }
+  .prop-tag {
+    font-family: var(--mono); font-size: 11px; padding: 3px 8px;
+    border-radius: 4px; background: var(--bg3); border: 1px solid var(--border2);
+    color: var(--text2);
+  }
+
+  /* ── Condition cards ──────────────────────────────────────────── */
+  .cond-list { display: flex; flex-direction: column; gap: 8px; }
+  .cond-card {
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg2); overflow: hidden;
+    transition: border-color .15s;
+  }
+  .cond-card:hover { border-color: var(--border2); }
+  .cond-card.open  { border-color: var(--border2); }
+  .cond-head {
+    display: flex; align-items: center; gap: 7px; padding: 10px 14px;
+    cursor: pointer; user-select: none; flex-wrap: wrap;
+  }
+  .cond-title { font-size: 12px; font-weight: 500; color: var(--text); flex: 1; min-width: 140px; }
+  .chevron {
+    font-size: 10px; color: var(--text3); transition: transform .2s; flex-shrink: 0;
+    margin-left: auto;
+  }
+  .cond-card.open .chevron { transform: rotate(180deg); }
+  .cond-body {
+    display: none; padding: 0 14px 14px;
+    border-top: 1px solid var(--border);
+  }
+  .cond-card.open .cond-body { display: block; }
+
+  /* ── Badges ───────────────────────────────────────────────────── */
+  .badge {
+    font-size: 10px; font-weight: 600; padding: 2px 8px;
+    border-radius: 4px; white-space: nowrap; border: 1px solid;
+    letter-spacing: .02em;
+  }
+  .badge-idle     { color: var(--c-green);  background: var(--c-green-bg);  border-color: var(--c-green-bd); }
+  .badge-busy     { color: var(--c-red);    background: var(--c-red-bg);    border-color: var(--c-red-bd); }
+  .badge-task     { color: var(--c-amber);  background: var(--c-amber-bg);  border-color: var(--c-amber-bd); }
+  .badge-notask   { color: var(--c-blue);   background: var(--c-blue-bg);   border-color: var(--c-blue-bd); }
+  .badge-preempt  { color: var(--c-purple); background: var(--c-purple-bg); border-color: var(--c-purple-bd); }
+
+  /* ── Action row ───────────────────────────────────────────────── */
+  .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  @media(max-width:600px) { .action-row { grid-template-columns: 1fr; } }
+  .action-box {
+    border-radius: 6px; padding: 10px 12px;
+    background: var(--bg3); border: 1px solid var(--border);
+  }
+  .action-lbl {
+    font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text3); margin-bottom: 5px;
+  }
+  .action-text { font-size: 12px; color: var(--text); line-height: 1.55; }
+
+  /* ── Notes ────────────────────────────────────────────────────── */
+  .note {
+    font-size: 11px; color: var(--text2); margin-top: 10px;
+    padding: 8px 11px; border-radius: 6px; line-height: 1.55;
+    border-left: 3px solid var(--border2);
+    background: var(--bg3);
+  }
+  .note.warn   { border-left-color: var(--c-red);    background: var(--c-red-bg); }
+  .note.info   { border-left-color: var(--c-blue);   background: var(--c-blue-bg); }
+  .note.purple { border-left-color: var(--c-purple); background: var(--c-purple-bg); }
+  .note strong { color: var(--text); font-weight: 600; }
+  code {
+    font-family: var(--mono); font-size: 10.5px;
+    background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: 3px; padding: 1px 5px; color: var(--text2);
+  }
+
+  /* ── Flow mini ────────────────────────────────────────────────── */
+  .flow { margin-top: 10px; padding: 10px 12px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); }
+  .flow-steps { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .fs {
+    font-size: 11px; padding: 3px 9px; border-radius: 4px;
+    background: var(--bg3); border: 1px solid var(--border2); color: var(--text2);
+    white-space: nowrap;
+  }
+  .fa { font-size: 12px; color: var(--text3); }
+
+  /* ── Priority table ───────────────────────────────────────────── */
+  .ptable { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+  .ptable th {
+    background: var(--bg3); font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; padding: 8px 10px; text-align: left;
+    border-bottom: 1px solid var(--border2); color: var(--text3);
+  }
+  .ptable td {
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+    color: var(--text); vertical-align: top;
+  }
+  .ptable tr:last-child td { border-bottom: none; }
+  .ptable tr:nth-child(even) td { background: var(--bg2); }
+  .win-a  { color: var(--c-green); font-weight: 600; }
+  .win-b  { color: var(--c-amber); font-weight: 600; }
+  .no-act { color: var(--text3); }
+
+  /* ── En-route scenario boxes ──────────────────────────────────── */
+  .er-scenario {
+    display: grid; grid-template-columns: 1fr 36px 1fr; gap: 8px;
+    align-items: start; margin-bottom: 12px;
+  }
+  @media(max-width:560px) {
+    .er-scenario { grid-template-columns: 1fr; }
+    .er-arrow { display: none; }
+  }
+  .robot-box {
+    border-radius: 7px; border: 1px solid var(--border2);
+    padding: 10px 12px; background: var(--bg3);
+  }
+  .robot-box.loser  { border-color: var(--c-red-bd);   background: var(--c-red-bg); }
+  .robot-box.winner { border-color: var(--c-green-bd); background: var(--c-green-bg); }
+  .rb-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text3); margin-bottom: 5px; }
+  .robot-box.loser  .rb-label { color: var(--c-red);   opacity: .7; }
+  .robot-box.winner .rb-label { color: var(--c-green); opacity: .7; }
+  .rb-name { font-size: 13px; font-weight: 600; color: var(--text); font-family: var(--mono); }
+  .rb-detail { font-size: 11px; color: var(--text2); margin-top: 3px; line-height: 1.4; }
+  .rb-badge { display: inline-block; margin-top: 6px; }
+  .er-arrow {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding-top: 30px; gap: 2px;
+  }
+  .er-arrow-line { width: 1px; height: 18px; background: var(--border2); }
+  .er-arrow-icon { font-size: 12px; color: var(--text3); }
+  .er-arrow-lbl { font-size: 9px; color: var(--text3); text-align: center; }
+  .result-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 2px; }
+  @media(max-width:500px) { .result-row { grid-template-columns: 1fr; } }
+  .result-box { border-radius: 6px; padding: 10px 12px; border: 1px solid; }
+  .result-box.loses { border-color: var(--c-red-bd);   background: var(--c-red-bg); }
+  .result-box.wins  { border-color: var(--c-green-bd); background: var(--c-green-bg); }
+  .result-lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+  .result-box.loses .result-lbl { color: var(--c-red); }
+  .result-box.wins  .result-lbl { color: var(--c-green); }
+  .result-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="page-header">
+    <div class="page-title">
+      Charging Logic Reference
+      <span class="page-title-badge">openTCS v6 · 4 AGVs · 2 Stations</span>
+    </div>
+    <div class="page-subtitle">
+      Threshold rules, dispatcher decisions, preemption logic, and en-route resolution
+    </div>
+  </div>
+
+  <!-- Threshold bar -->
+  <div class="section">
+    <div class="section-label">Energy thresholds</div>
+    <div class="thbar">
+      <div class="thbar-seg seg-critical">  Critical <span class="seg-pct">≤30%</span></div>
+      <div class="thbar-seg seg-good">      Good <span class="seg-pct">50%</span></div>
+      <div class="thbar-seg seg-sufficient">Sufficient <span class="seg-pct">80%</span></div>
+      <div class="thbar-seg seg-full">      Full <span class="seg-pct">98%</span></div>
+    </div>
+  </div>
+
+  <!-- ── STATE MACHINE SECTION ───────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">State machine — rules by threshold level</div>
+
+    <div class="tabs" id="main-tabs">
+      <button class="tab t-critical active"   onclick="switchTab('critical',this)">Critical ≤ 30%</button>
+      <button class="tab t-good"              onclick="switchTab('good',this)">Good 50%</button>
+      <button class="tab t-sufficient"        onclick="switchTab('sufficient',this)">Sufficiently Recharged 80%</button>
+      <button class="tab t-full"              onclick="switchTab('full',this)">Full ≥ 98%</button>
+      <button class="tab t-enroute"           onclick="switchTab('enroute',this)">En-Route Preemption</button>
+    </div>
+
+    <!-- ── CRITICAL PANEL ──────────────────────────────── -->
+    <div class="panel active" id="panel-critical">
+      <div class="level-banner critical">
+        <div>
+          <div class="level-pct critical">≤ 30%</div>
+          <div class="level-desc">Critical — highest priority. Robot disabled until Good (50%).</div>
+        </div>
+        <div class="level-prop"><span class="prop-tag">energyLevel.critical = 30</span></div>
+      </div>
+
+      <div class="cond-list">
+
+        <div class="cond-card open">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-idle">Charger idle</span>
+            <span class="badge badge-notask">No active task</span>
+            <span class="cond-title">Immediate recharge — disable robot</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Assign recharge order immediately. Set integration level to <code>TO_BE_RESPECTED</code> (disabled). Robot stays disabled until battery ≥ 50%.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Navigate to nearest free charger. Begin charging. Remain disabled until battery reaches Good (50%).</div>
+              </div>
+            </div>
+            <div class="flow"><div class="flow-steps">
+              <span class="fs">Battery hits 30%</span><span class="fa">→</span>
+              <span class="fs">FMS disables robot</span><span class="fa">→</span>
+              <span class="fs">Charge order issued</span><span class="fa">→</span>
+              <span class="fs">Robot charges to 50%</span><span class="fa">→</span>
+              <span class="fs">FMS re-enables robot</span>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-idle">Charger idle</span>
+            <span class="badge badge-task">Task in progress</span>
+            <span class="cond-title">Complete last pallet drop, then charge</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Allow current drop leg to complete. Queue recharge order as next task immediately after. Do not assign any further transport orders.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Complete the pallet drop at destination. Proceed directly to charger without returning to parking.</div>
+              </div>
+            </div>
+            <div class="note warn">The running order must be marked <strong>dispensable</strong> in openTCS so the recharge order can be queued immediately after it.</div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-busy">Charger occupied — Good/Sufficient robot</span>
+            <span class="cond-title">Preempt occupant, yield charger to critical robot</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Withdraw charge order from the Good/Sufficient robot (50–98%). Issue a parking order to it. Assign recharge order to critical robot at highest priority.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Good/Sufficient robot disconnects, navigates to parking. Critical robot claims charger immediately.</div>
+              </div>
+            </div>
+            <div class="note warn">Do <strong>not</strong> preempt if charger is occupied by another critical robot. Queue and wait instead.</div>
+            <div class="flow"><div class="flow-steps">
+              <span class="fs">Robot-A ≤30%</span><span class="fa">→</span>
+              <span class="fs">Charger: Robot-B at 60%</span><span class="fa">→</span>
+              <span class="fs">Withdraw Robot-B</span><span class="fa">→</span>
+              <span class="fs">Robot-B parks</span><span class="fa">→</span>
+              <span class="fs">Robot-A charges to 50%</span>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-busy">Charger occupied — Critical robot</span>
+            <span class="cond-title">Wait — do not preempt a charging critical robot</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Charger is occupied by another critical robot. Do NOT issue a withdrawal. Hold this robot at its safe position. Queue recharge order (next in priority).</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Hold at current safe location. Once the charging robot reaches 50% and releases the charger, this robot is dispatched automatically.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-notask">New transport order arrives</span>
+            <span class="cond-title">Transport order must be refused while robot is disabled</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Robot integration level is <code>TO_BE_RESPECTED</code>. FMS must NOT assign any transport order to this robot until battery ≥ 50%.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Ignore the new order. Continue charging until Good level (50%) is reached.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /cond-list -->
+    </div><!-- /panel-critical -->
+
+    <!-- ── GOOD PANEL ───────────────────────────────────── -->
+    <div class="panel" id="panel-good">
+      <div class="level-banner good">
+        <div>
+          <div class="level-pct good">50%</div>
+          <div class="level-desc">Good — robot re-enabled, fully operational. Opportunistic charging only.</div>
+        </div>
+        <div class="level-prop"><span class="prop-tag">energyLevel.degraded = 50</span></div>
+      </div>
+
+      <div class="cond-list">
+
+        <div class="cond-card open">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-preempt">Re-enabled after critical charge</span>
+            <span class="cond-title">Battery reaches 50% — FMS re-enables robot</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Detect battery ≥ 50%. Restore integration level to <code>TO_BE_UTILIZED</code>. Robot is now available for task assignment. May continue charging opportunistically.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Becomes available for tasks. If no task is immediately assigned, continues charging toward Sufficient (80%).</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-idle">Charger idle</span>
+            <span class="badge badge-notask">No tasks in FMS</span>
+            <span class="cond-title">Assign opportunistic charge to lowest-battery robot in 50–80% range</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Poll all robot battery levels. Find robot with lowest % between 50–80%. Assign recharge order to that robot only. Robot stays enabled (<code>TO_BE_UTILIZED</code>) throughout.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Selected robot navigates to charger. Remains enabled — ready to receive transport orders while charging. Charges toward 80%.</div>
+              </div>
+            </div>
+            <div class="note info">Custom dispatcher logic required. openTCS default dispatcher does not rank by battery within the degraded range. Implement a periodic polling script or custom vehicle selector in the charging manager service.</div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-busy">Charging in progress</span>
+            <span class="badge badge-task">Task arrives mid-charge</span>
+            <span class="cond-title">Disconnect and execute task</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Robot is enabled — dispatcher can assign transport orders normally. Withdraw the recharge order. Assign transport order immediately.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Disconnect from charger. Navigate to pickup point. Execute transport order.</div>
+              </div>
+            </div>
+            <div class="flow"><div class="flow-steps">
+              <span class="fs">Task arrives</span><span class="fa">→</span>
+              <span class="fs">Withdraw charge order</span><span class="fa">→</span>
+              <span class="fs">Robot disconnects</span><span class="fa">→</span>
+              <span class="fs">Execute task</span>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-task">Tasks available</span>
+            <span class="cond-title">50–80% robots stay at parking, execute tasks normally</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Assign transport orders normally. Do not route 50–80% robots to charger while tasks are available. All are fully operational.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Wait at parking. Execute assigned tasks. Return to parking between tasks. Charger is reserved for critical use or opportunistic idle use only.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /panel-good -->
+
+    <!-- ── SUFFICIENT PANEL ─────────────────────────────── -->
+    <div class="panel" id="panel-sufficient">
+      <div class="level-banner sufficient">
+        <div>
+          <div class="level-pct sufficient">80%</div>
+          <div class="level-desc">Sufficiently Recharged — charging may stop. Must yield charger to critical robots.</div>
+        </div>
+        <div class="level-prop"><span class="prop-tag">energyLevel.sufficientlyRecharged = 80</span></div>
+      </div>
+
+      <div class="cond-list">
+
+        <div class="cond-card open">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-busy">Charging in progress</span>
+            <span class="badge badge-notask">No tasks</span>
+            <span class="cond-title">Continue charging toward Full (98%)</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">No forced action. Robot remains at charger. Monitor continuously for task arrivals, critical preemption events, or Full threshold.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Stay connected. Continue charging passively toward 98%. Disconnect only on preemption, task assignment, or when Full is reached.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-preempt">Preemption event</span>
+            <span class="cond-title">Another robot hits Critical — yield charger immediately</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Withdraw charge order from this robot (80–98%). Issue parking order. Queue recharge order for critical robot at highest priority.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Disconnect. Navigate to parking. After critical robot finishes, this robot may be re-dispatched to the charger if still below Full.</div>
+              </div>
+            </div>
+            <div class="flow"><div class="flow-steps">
+              <span class="fs">Robot-X hits ≤30%</span><span class="fa">→</span>
+              <span class="fs">FMS checks charger</span><span class="fa">→</span>
+              <span class="fs">80–98% robot detected</span><span class="fa">→</span>
+              <span class="fs">Withdraw + park</span><span class="fa">→</span>
+              <span class="fs">Critical robot charges</span>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-task">Tasks available</span>
+            <span class="cond-title">80–98% robots stay at parking, execute tasks normally</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Assign transport orders normally. Charger used only opportunistically — not routed here while tasks exist.</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Execute tasks from parking. Return to parking between tasks. No self-routing to charger while tasks are available.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /panel-sufficient -->
+
+    <!-- ── FULL PANEL ───────────────────────────────────── -->
+    <div class="panel" id="panel-full">
+      <div class="level-banner full">
+        <div>
+          <div class="level-pct full">≥ 98%</div>
+          <div class="level-desc">Full — disconnect and park immediately. Free the charger.</div>
+        </div>
+        <div class="level-prop"><span class="prop-tag">energyLevel.fullyRecharged = 98</span></div>
+      </div>
+
+      <div class="cond-list">
+
+        <div class="cond-card open">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-busy">Was charging</span>
+            <span class="cond-title">Battery reaches 98% — disconnect and park</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="action-row">
+              <div class="action-box">
+                <div class="action-lbl">FMS action</div>
+                <div class="action-text">Charging order completes (<code>energyLevel.fullyRecharged = 98</code> triggers). FMS automatically creates a parking order. Routes robot to preferred parking position (<code>tcs:preferredParkingPosition</code>).</div>
+              </div>
+              <div class="action-box">
+                <div class="action-lbl">Robot action</div>
+                <div class="action-text">Disconnect from charger. Navigate to assigned parking position. Charger is freed for the next queued robot.</div>
+              </div>
+            </div>
+            <div class="flow"><div class="flow-steps">
+              <span class="fs">Battery = 98%</span><span class="fa">→</span>
+              <span class="fs">Charge order completes</span><span class="fa">→</span>
+              <span class="fs">Parking order created</span><span class="fa">→</span>
+              <span class="fs">Robot disconnects</span><span class="fa">→</span>
+              <span class="fs">Navigates to parking</span><span class="fa">→</span>
+              <span class="fs">Charger freed</span>
+            </div></div>
+            <div class="note info">openTCS handles this automatically when <code>reparkVehiclesOnCharge = true</code> in the dispatcher config and <code>energyLevel.fullyRecharged = 98</code> is set on the vehicle model.</div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /panel-full -->
+
+    <!-- ── EN-ROUTE PREEMPTION PANEL ───────────────────── -->
+    <div class="panel" id="panel-enroute">
+      <div class="level-banner enroute">
+        <div>
+          <div class="level-pct enroute">Rule 0</div>
+          <div class="level-desc">En-route preemption — evaluated first, before all other rules, every cycle.</div>
+        </div>
+        <div class="level-prop"><span class="prop-tag">state = EXECUTING on charge order</span></div>
+      </div>
+
+      <div class="cond-list">
+
+        <!-- Scenario 1 -->
+        <div class="cond-card open">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-busy">Same group · lower % frees up</span>
+            <span class="cond-title">Lower battery wins — en-route robot redirected to park</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="er-scenario">
+              <div class="robot-box loser">
+                <div class="rb-label">Robot A — en route to charger</div>
+                <div class="rb-name">Vehicle-0001</div>
+                <div class="rb-detail">Battery: 30%<br>Charge order active, still travelling</div>
+                <div class="rb-badge"><span class="badge badge-busy">EXECUTING charge order</span></div>
+              </div>
+              <div class="er-arrow">
+                <div class="er-arrow-lbl">while</div>
+                <div class="er-arrow-line"></div>
+                <div class="er-arrow-icon">↓</div>
+              </div>
+              <div class="robot-box winner">
+                <div class="rb-label">Robot B — just finished task</div>
+                <div class="rb-name">Vehicle-0002</div>
+                <div class="rb-detail">Battery: 28%<br>Now IDLE, no charge order yet</div>
+                <div class="rb-badge"><span class="badge badge-idle">IDLE · needs charge</span></div>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-box loses">
+                <div class="result-lbl">Robot A (30%) — loses</div>
+                <div class="result-text">Charge order <strong>withdrawn</strong>. Parking order issued. Robot A goes to its preferred parking position.</div>
+              </div>
+              <div class="result-box wins">
+                <div class="result-lbl">Robot B (28%) — wins</div>
+                <div class="result-text">New charge order issued. Robot B proceeds to charger. Disabled until ≥ 50% if Critical.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scenario 2 -->
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-notask">Same group · higher % frees up</span>
+            <span class="cond-title">No preemption — en-route robot has lower %, keeps the charger</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="note info">Robot A en route at <strong>28%</strong>. Robot B just freed at <strong>30%</strong>. Same group, A% &lt; B% → Robot A keeps its charge order. No action on Robot B yet — it will be evaluated by the Good-level opportunistic rule on the next cycle.</div>
+          </div>
+        </div>
+
+        <!-- Scenario 3 -->
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-busy">Cross-group · Critical vs Good</span>
+            <span class="cond-title">Critical always beats Good en route — regardless of exact %</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="er-scenario">
+              <div class="robot-box loser">
+                <div class="rb-label">Robot A — en route</div>
+                <div class="rb-name">Vehicle-0001</div>
+                <div class="rb-detail">Battery: 55% (Good group)<br>Charge order active, travelling</div>
+                <div class="rb-badge"><span class="badge badge-task">Good 50–80%</span></div>
+              </div>
+              <div class="er-arrow">
+                <div class="er-arrow-lbl">while</div>
+                <div class="er-arrow-line"></div>
+                <div class="er-arrow-icon">↓</div>
+              </div>
+              <div class="robot-box winner">
+                <div class="rb-label">Robot B — just freed</div>
+                <div class="rb-name">Vehicle-0002</div>
+                <div class="rb-detail">Battery: 28% (Critical group)<br>Just finished task, now IDLE</div>
+                <div class="rb-badge"><span class="badge badge-busy">Critical ≤30%</span></div>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-box loses">
+                <div class="result-lbl">Robot A (55% Good) — loses</div>
+                <div class="result-text">Charge order withdrawn. Parking order issued. Battery 55% — safe to park.</div>
+              </div>
+              <div class="result-box wins">
+                <div class="result-lbl">Robot B (28% Critical) — wins</div>
+                <div class="result-text">Charge order issued immediately. Robot disabled until ≥ 50%. Highest group priority.</div>
+              </div>
+            </div>
+            <div class="note warn"><strong>Group priority overrides %.</strong> Even if the en-route robot has a lower absolute % within a higher group (e.g. 52% Good vs 28% Critical), Critical always wins.</div>
+          </div>
+        </div>
+
+        <!-- Scenario 4 -->
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-notask">Cross-group · Good vs Critical</span>
+            <span class="cond-title">Critical protected — never displaced by Good or Sufficient</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="note info">Robot A en route at <strong>28% Critical</strong>. Robot B just freed at <strong>55% Good</strong>. Critical is never displaced by a higher group. Robot A keeps its charge order. Robot B waits at parking.</div>
+          </div>
+        </div>
+
+        <!-- Scenario 5: already charging -->
+        <div class="cond-card">
+          <div class="cond-head" onclick="toggle(this)">
+            <span class="badge badge-preempt">Robot already CHARGING</span>
+            <span class="cond-title">En-route rule does not apply — use physical preemption instead</span>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="cond-body">
+            <div class="note purple">Once a robot's state transitions to <code>CHARGING</code> (physically at the charger), the en-route preemption rule no longer applies. Switch to the physical preemption rules:<br><br>• Good/Sufficient/Full at charger → Critical robot can preempt<br>• Critical at charger → another Critical robot must queue and wait</div>
+          </div>
+        </div>
+
+      </div><!-- /cond-list -->
+
+      <!-- Priority resolution table -->
+      <div style="margin-top: 20px;">
+        <div class="section-label">Priority resolution matrix</div>
+        <table class="ptable">
+          <thead>
+            <tr>
+              <th>En-route (A)</th>
+              <th>Newly free (B)</th>
+              <th>Same group?</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>30% Critical</td>
+              <td>28% Critical</td>
+              <td>Yes</td>
+              <td><span class="win-b">B wins</span> — lower % takes priority. A gets park order.</td>
+            </tr>
+            <tr>
+              <td>28% Critical</td>
+              <td>30% Critical</td>
+              <td>Yes</td>
+              <td><span class="win-a">A keeps charger</span> — A has lower %, no preemption.</td>
+            </tr>
+            <tr>
+              <td>55% Good</td>
+              <td>28% Critical</td>
+              <td>No</td>
+              <td><span class="win-b">B wins</span> — Critical group beats Good regardless of %.</td>
+            </tr>
+            <tr>
+              <td>28% Critical</td>
+              <td>55% Good</td>
+              <td>No</td>
+              <td><span class="win-a">A keeps charger</span> — Critical is never displaced by Good.</td>
+            </tr>
+            <tr>
+              <td>60% Good</td>
+              <td>52% Good</td>
+              <td>Yes</td>
+              <td><span class="win-b">B wins</span> — lower % within same group.</td>
+            </tr>
+            <tr>
+              <td>85% Sufficient</td>
+              <td>28% Critical</td>
+              <td>No</td>
+              <td><span class="win-b">B wins</span> — Critical beats Sufficient.</td>
+            </tr>
+            <tr>
+              <td>85% Sufficient</td>
+              <td>65% Good</td>
+              <td>No</td>
+              <td><span class="win-b">B wins</span> — Good beats Sufficient.</td>
+            </tr>
+            <tr>
+              <td>88% Sufficient</td>
+              <td>82% Sufficient</td>
+              <td>Yes</td>
+              <td><span class="win-b">B wins</span> — lower % within same group.</td>
+            </tr>
+            <tr>
+              <td>98% Full (charging)</td>
+              <td>Any needing charge</td>
+              <td>Any</td>
+              <td><span class="win-b">B wins</span> — Full robot also receives park order from the Full rule.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div><!-- /panel-enroute -->
+
+  </div><!-- /section -->
+
+</div><!-- /page -->
+
+<script>
+  function switchTab(id, btn) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('#main-tabs .tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('panel-' + id).classList.add('active');
+    btn.classList.add('active');
+  }
+
+  function toggle(head) {
+    const card = head.closest('.cond-card');
+    card.classList.toggle('open');
+  }
+
+  /* Auto-open first card in each panel on tab switch */
+  document.querySelectorAll('.panel').forEach(panel => {
+    const firstCard = panel.querySelector('.cond-card');
+    if (firstCard) firstCard.classList.add('open');
+  });
+</script>
+</body>
+</html>

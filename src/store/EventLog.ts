@@ -78,6 +78,16 @@ class EventLog {
     )
   }
 
+  hasRecentChargerAction(charger: string, action: string, windowMs: number): boolean {
+    const cutoff = Date.now() - windowMs
+    return this.entries.some(
+      (e) =>
+        e.charger === charger &&
+        e.action === action &&
+        new Date(e.timestamp).getTime() >= cutoff
+    )
+  }
+
   clear(): void {
     this.entries = []
   }

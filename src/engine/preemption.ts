@@ -50,7 +50,7 @@ export function buildPreemptionActions(
 
   // Guard 3: debounce — no preemption for this charger in the last 2 poll cycles
   const debounceMs = (config.pollIntervalMs ?? 10000) * 2
-  if (eventLog.hasRecentAction(chargerName, 'PREEMPT_INITIATED', debounceMs)) {
+  if (eventLog.hasRecentChargerAction(chargerName, 'PREEMPT_INITIATED', debounceMs)) {
     return []
   }
 
